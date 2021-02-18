@@ -241,6 +241,8 @@ dependencies = [
 [[package]]
 name = "osoy"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a796930b58b38347282929420b29ba063867b0dd66fe5db25ca27633ad7ef68b"
 dependencies = [
  "git2",
  "regex",
