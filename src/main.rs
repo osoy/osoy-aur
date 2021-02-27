@@ -2,10 +2,12 @@
 extern crate osoy;
 
 use osoy::{gitutil, operator, repo, termion, Config, Exec, Location};
+use serde::Deserialize;
 use std::str::FromStr;
 use std::{env, process};
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
+use terminal_size::{terminal_size, Width};
 
 #[derive(StructOpt, Debug)]
 #[structopt(
@@ -16,12 +18,21 @@ use structopt::StructOpt;
     ],
 )]
 enum Opt {
+    #[structopt(about = "Install packages")]
     Install(operator::clone::Opt),
+    #[structopt(about = "List installed packages")]
     List(operator::list::Opt),
+    #[structopt(aliases = &["rm", "uninstall"], about = "Uninstall packages")]
     Remove(operator::remove::Opt),
+    #[structopt(about = "Search for packages")]
+    Search {
+        #[structopt(required = true, min_values = 1, help = Location::about())]
+        keywords: Vec<String>,
+    },
 }
 
 const AUR_URL: &str = "https://aur.archlinux.org/";
+const TAB_SIZE: usize = 4;
 
 fn rename_targets(targets: &[Location], fill_empty: bool) -> Vec<Location> {
     match !fill_empty || targets.len() > 0 {
@@ -44,9 +55,82 @@ fn force_remove_dir(path: &str) -> i32 {
         .unwrap_or(1)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct AurPackage {
+    name: String,
+    version: Option<String>,
+    description: Option<String>,
+    #[serde(rename = "URL")]
+    url: Option<String>,
+    num_votes: u64,
+    popularity: f64,
+    out_of_date: Option<u64>,
+    maintainer: Option<String>,
+    first_submitted: u64,
+    last_modified: u64,
+}
+
+impl AurPackage {
+    fn into_search_entry(self, cols: Option<u16>) -> String {
+        let mut description = self
+            .description
+            .map(|v| format!("\n{}{}", " ".repeat(TAB_SIZE), v))
+            .unwrap_or("".into());
+        if let Some(cols) = cols {
+            for i in 0..(description.len() / (cols as usize - TAB_SIZE)) {
+                let i = cols as usize * (i + 1);
+                description.replace_range(i..i, "\n    ");
+            }
+        }
+        [
+            self.maintainer
+                .map(|v| format!("{}/", v))
+                .unwrap_or("".into()),
+            self.name,
+            self.version.map(|v| format!(" {}", v)).unwrap_or("".into()),
+            format!(" [{}]", self.popularity),
+            description,
+        ]
+        .join("")
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AurResponse {
+    results: Vec<AurPackage>,
+}
+
 impl Exec for Opt {
     fn exec(self, config: Config) -> i32 {
         match self {
+            Opt::Search { keywords } => {
+                let res = match reqwest::blocking::get(&format!(
+                    "{}rpc/?v=5&type=search&arg={}",
+                    AUR_URL,
+                    keywords.join(" ")
+                )) {
+                    Ok(res) => res,
+                    Err(_) => {
+                        info!("request failed");
+                        return 1;
+                    }
+                };
+                let AurResponse { mut results } = match res.json::<AurResponse>() {
+                    Ok(res) => res,
+                    Err(_) => {
+                        info!("could not parse response");
+                        return 1;
+                    }
+                };
+                results.sort_unstable_by_key(|pkg| (pkg.popularity * -1000.0) as i64);
+                let cols = terminal_size().map(|(Width(w), _)| w);
+                for pkg in results {
+                    println!("{}", pkg.into_search_entry(cols));
+                }
+                0
+            }
+
             Opt::Install(mut opt) => {
                 opt.targets = rename_targets(&opt.targets, false);
                 let auth_cache = gitutil::AuthCache::new();
