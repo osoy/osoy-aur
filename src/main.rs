@@ -18,13 +18,13 @@ use terminal_size::{terminal_size, Width};
     ],
 )]
 enum Opt {
-    #[structopt(about = "Install packages")]
+    #[structopt(alias = "i", about = "Install packages")]
     Install(operator::clone::Opt),
     #[structopt(about = "List installed packages")]
     List(operator::list::Opt),
     #[structopt(aliases = &["rm", "uninstall"], about = "Uninstall packages")]
     Remove(operator::remove::Opt),
-    #[structopt(about = "Search for packages")]
+    #[structopt(alias = "s", about = "Search for packages")]
     Search {
         #[structopt(required = true, min_values = 1, help = Location::about())]
         keywords: Vec<String>,
@@ -72,16 +72,29 @@ struct AurPackage {
 }
 
 impl AurPackage {
-    fn into_search_entry(self, cols: Option<u16>) -> String {
+    fn into_search_entry(self, cols: Option<usize>) -> String {
         let mut description = self
             .description
             .map(|v| format!("\n{}{}", " ".repeat(TAB_SIZE), v))
             .unwrap_or("".into());
         if let Some(cols) = cols {
-            for i in 0..(description.len() / (cols as usize - TAB_SIZE)) {
-                let i = cols as usize * (i + 1);
-                description.replace_range(i..i, "\n    ");
-            }
+            let mut line = 0;
+            description = description
+                .split(' ')
+                .fold(" ".repeat(TAB_SIZE), |acc, word| {
+                    format!(
+                        "{}{}{}",
+                        acc,
+                        match (acc.len() + word.len() + 1) / cols > line {
+                            false => " ".into(),
+                            true => {
+                                line += 1;
+                                format!("\n{}", " ".repeat(TAB_SIZE))
+                            }
+                        },
+                        word
+                    )
+                });
         }
         [
             self.maintainer
@@ -124,7 +137,7 @@ impl Exec for Opt {
                     }
                 };
                 results.sort_unstable_by_key(|pkg| (pkg.popularity * -1000.0) as i64);
-                let cols = terminal_size().map(|(Width(w), _)| w);
+                let cols = terminal_size().map(|(Width(w), _)| w as usize);
                 for pkg in results {
                     println!("{}", pkg.into_search_entry(cols));
                 }
