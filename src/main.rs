@@ -19,11 +19,21 @@ use terminal_size::{terminal_size, Width};
 )]
 enum Opt {
     #[structopt(alias = "i", about = "Install packages")]
-    Install(operator::clone::Opt),
+    Install {
+        #[structopt(flatten)]
+        opt: operator::clone::Opt,
+        #[structopt(short, long, help = "Run pacman interactively")]
+        interactive: bool,
+    },
     #[structopt(about = "List installed packages")]
     List(operator::list::Opt),
     #[structopt(aliases = &["rm", "uninstall"], about = "Uninstall packages")]
-    Remove(operator::remove::Opt),
+    Remove {
+        #[structopt(flatten)]
+        opt: operator::remove::Opt,
+        #[structopt(short, long, help = "Run pacman interactively")]
+        interactive: bool,
+    },
     #[structopt(alias = "s", about = "Search for packages")]
     Search {
         #[structopt(required = true, min_values = 1, help = Location::about())]
@@ -144,7 +154,10 @@ impl Exec for Opt {
                 0
             }
 
-            Opt::Install(mut opt) => {
+            Opt::Install {
+                mut opt,
+                interactive,
+            } => {
                 opt.targets = rename_targets(&opt.targets, false);
                 let auth_cache = gitutil::AuthCache::new();
                 let mut errors = 0;
@@ -181,7 +194,10 @@ impl Exec for Opt {
                         Ok(_) => {
                             let name = path.file_name().unwrap().to_string_lossy();
                             let cmd = "makepkg";
-                            let args = ["-sirc", "--noconfirm", &name];
+                            let mut args = vec!["-sirc", &name];
+                            if !interactive {
+                                args.push("--noconfirm");
+                            }
 
                             if opt.verbose {
                                 println!("> {} {}", cmd, args.join(" "));
@@ -215,7 +231,10 @@ impl Exec for Opt {
                 errors
             }
 
-            Opt::Remove(mut opt) => {
+            Opt::Remove {
+                mut opt,
+                interactive,
+            } => {
                 opt.targets = rename_targets(&opt.targets, false);
                 let mut errors = 0;
 
@@ -224,7 +243,10 @@ impl Exec for Opt {
                         for path in iter {
                             let name = path.file_name().unwrap().to_string_lossy();
                             if opt.force || ask_bool!("remove '{}'?", name) {
-                                let mut args = vec!["-Rns", "--noconfirm", &name];
+                                let mut args = vec!["-Rns", &name];
+                                if !interactive {
+                                    args.push("--noconfirm");
+                                }
                                 let mut cmd = "pacman";
 
                                 if env::var("USER").map(|user| user != "root").unwrap_or(true) {
